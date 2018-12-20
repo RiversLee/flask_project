@@ -1,11 +1,11 @@
 #unicoding=utf-8
-from flask import render_template,redirect,request,url_for,flash,abort
+from flask import render_template,redirect,request,url_for,flash,abort,current_app
 from flask_login import login_user,logout_user,login_required
 from . import auth
-from ..models import User,db,Role,Post
+from ..models import User,db,Role,Post,LakerNews,Comment,Follow
 from .forms import LoginForm,RegistrationForm,ChangeEmailForm,\
                 ChangePasswordForm,PasswordResetForm,PasswordResetRequestForm,\
-                EditProfileForm,EditProfileAdminForm,PostForm
+                EditProfileForm,EditProfileAdminForm,PostForm,CommentForm
 
 from ..email import send_email
 from flask_login import current_user
@@ -28,8 +28,12 @@ def index():
         db.session.add(post)
         db.session.commit()
         return redirect(url_for('auth.index'))
-    posts = Post.query.order_by(Post.timetamp.desc()).all()
-    return render_template('index.html',form=form,posts=posts)
+    page = request.args.get('page', 1, type=int)
+    pagination = Post.query.order_by(Post.timetamp.desc()).paginate(
+        page, per_page=current_app.config['FLASKY_POSTS_PER_PAGE'],
+        error_out=False)
+    posts = pagination.items
+    return render_template('index.html',form=form,posts=posts,pagination=pagination)
 
 @auth.route('/login',methods=['GET','POST'])
 def login():
@@ -233,3 +237,138 @@ def edit_profile_admin(id):
     form.about_me.data = user.about_me
     return render_template('edit_profile.html', form=form, user=user)
 
+
+@auth.route('/edit/<int:id>', methods=['GET', 'POST'])
+@login_required
+def edit(id):
+    post = Post.query.get_or_404(id)
+    if current_user != post.author and \
+            not current_user.can(Permission.ADMIN):
+        abort(403)
+    form = PostForm()
+    if form.validate_on_submit():
+        post.body = form.body.data
+        db.session.add(post)
+        db.session.commit()
+        flash('The post has been updated.')
+        return redirect(url_for('.post', id=post.id))
+    form.body.data = post.body
+    return render_template('edit_post.html', form=form)
+
+@auth.route('/report',methods=['GET','POST'])
+def report():
+    page = request.args.get('page', 1, type=int)
+    pagination = LakerNews.query.order_by(LakerNews.id.desc()).paginate(
+        page, per_page=current_app.config['FLASKY_POSTS_PER_PAGE'],
+        error_out=False)
+    posts = pagination.items
+    return render_template('report.html',posts=posts,pagination=pagination)
+
+@auth.route('/report_edit/<int:id>',methods=['GET','POST'])
+def report_edit(id):
+    news = LakerNews.query.filter_by(id=id).first()
+    form = CommentForm()
+    if form.validate_on_submit():
+        comment = Comment(body = form.body.data,news=news,
+                          author=current_user._get_current_object())
+        db.session.add(comment)
+        db.session.commit()
+        flash('Your comment has been published.')
+        return redirect(url_for('auth.report_edit',id=news.id,page=-1))
+    page = request.args.get('page', 1, type=int)
+    if page == -1:
+        page = (news.comments.count() - 1) // \
+               current_app.config['FLASKY_COMMENTS_PER_PAGE'] + 1
+    pagination = news.comments.order_by(Comment.timetamp.asc()).paginate(
+        page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
+        error_out=False)
+    comments = pagination.items
+    return render_template('reportShow.html',news=news,comments=comments,pagination=pagination,form=form)
+
+@auth.route('/post/<int:id>',methods=['GET','POST'])
+def post(id):
+    post = Post.query.get_or_404(id)
+    form = CommentForm()
+    if form.validate_on_submit():
+        comment = Comment(body = form.body.data,post=post,
+                          author=current_user._get_current_object())
+        db.session.add(comment)
+        db.session.commit()
+        flash('Your comment has been published.')
+        return redirect(url_for('auth.post',id=post.id,page=-1))
+    page = request.args.get('page', 1, type=int)
+    if page == -1:
+        page = (post.comments.count() - 1) // \
+               current_app.config['FLASKY_COMMENTS_PER_PAGE'] + 1
+    pagination = post.comments.order_by(Comment.timetamp.asc()).paginate(
+        page, per_page=current_app.config['FLASKY_COMMENTS_PER_PAGE'],
+        error_out=False)
+    comments = pagination.items
+    return render_template('post.html', posts=[post], form=form,
+                           comments=comments, pagination=pagination)
+
+
+@auth.route('/follow/<username>',methods=['GET','POST'])
+@login_required
+def follow(username):
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        flash('Invalid user.')
+        return redirect(url_for('auth.index'))
+    if current_user.is_following(user):
+        flash('You are already following this user.')
+        return redirect(url_for('auth.user', username=user.username))
+    current_user.follow(user)
+    db.session.commit()
+    flash('You are now following %s.' % user.username)
+    return redirect(url_for('auth.user', username=user.username))
+
+
+@auth.route('/unfollow/<username>')
+@login_required
+
+def unfollow(username):
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        flash('Invalid user.')
+        return redirect(url_for('auth.index'))
+    if not current_user.is_following(user):
+        flash('You are not following this user.')
+        return redirect(url_for('auth.user', username=username))
+    current_user.unfollow(user)
+    db.session.commit()
+    flash('You are not following %s anymore.' % username)
+    return redirect(url_for('auth.user', username=username))
+
+
+@auth.route('/followers/<username>')
+def followers(username):
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        flash('Invalid user.')
+        return redirect(url_for('auth.index'))
+    page = request.args.get('page', 1, type=int)
+    pagination = user.followers.paginate(
+        page, per_page=current_app.config['FLASKY_FOLLOWERS_PER_PAGE'],
+        error_out=False)
+    follows = [{'user': item.follower, 'timetamp': item.timetamp}
+               for item in pagination.items]
+    return render_template('followers.html', user=user, title="Followers of",
+                           endpoint='auth.followers', pagination=pagination,
+                           follows=follows)
+
+@auth.route('/followed_by/<username>')
+def followed_by(username):
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        flash('Invalid user.')
+        return redirect(url_for('auth.index'))
+    page = request.args.get('page', 1, type=int)
+    pagination = user.followed.paginate(
+        page, per_page=current_app.config['FLASKY_FOLLOWERS_PER_PAGE'],
+        error_out=False)
+    follows = [{'user': item.followed, 'timetamp': item.timetamp}
+               for item in pagination.items]
+    return render_template('followers.html', user=user, title="Followed by",
+                           endpoint='auth.followed_by', pagination=pagination,
+                           follows=follows)

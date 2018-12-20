@@ -38,6 +38,11 @@ div.post-content {
     margin-left: 48px;
     min-height: 48px;
 }
+div.report-content{
+
+    font-size:100px;
+}
+
 div.post-footer {
     text-align: right;
 }
@@ -95,6 +100,8 @@ div.flask-pagedown-preview h3 {
 }
 .post-body h1 {
     font-size: 140%;
+
+
 }
 .post-body h2 {
     font-size: 130%;
@@ -102,6 +109,14 @@ div.flask-pagedown-preview h3 {
 .post-body h3 {
     font-size: 120%;
 }
+.post-body h4 {
+    font-size:140%;
+
+}
 .table.followers tr {
     border-bottom: 1px solid #e0e0e0;
+}
+.nba_title{
+    font-size:500%
+    text-align:center;
 }

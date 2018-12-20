@@ -10,7 +10,8 @@ from faker import Faker
 import hashlib
 from random import randint
 from sqlalchemy.exc import IntegrityError
-from flask import request
+from markdown import markdown
+import bleach
 class Role(db.Model):
     __tablename__ = 'roles'
     id = db.Column(db.Integer,primary_key=True)
@@ -62,6 +63,12 @@ class Role(db.Model):
     def reset_permissions(self):
         self.permissions = 0
 
+class Follow(db.Model):
+    __tablename__ = 'follows'
+    follower_id = db.Column(db.Integer,db.ForeignKey('users.id'),primary_key=True)
+    followed_id = db.Column(db.Integer,db.ForeignKey('users.id'),primary_key=True)
+    timetamp = db.Column(db.DateTime,default=datetime.utcnow)
+
 class User(UserMixin,db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer,primary_key=True)
@@ -71,13 +78,19 @@ class User(UserMixin,db.Model):
     password_hash = db.Column(db.String(128))
     role_id = db.Column(db.Integer,db.ForeignKey('roles.id'))
     posts = db.relationship('Post',backref='author',lazy='dynamic')
-
+    followed = db.relationship('Follow',foreign_keys=[Follow.follower_id],
+                               backref=db.backref('follower',lazy='joined'),
+                               lazy='dynamic',cascade='all,delete-orphan')
+    followers = db.relationship('Follow', foreign_keys=[Follow.followed_id],
+                               backref=db.backref('followed', lazy='joined'),
+                               lazy='dynamic', cascade='all,delete-orphan')
     name = db.Column(db.String(64)) #真实姓名
     location = db.Column(db.String(64)) #所在地
     about_me = db.Column(db.Text()) #自我介绍 db.Test()最大的好处这个不需要指定最大长度
     member_since = db.Column(db.DateTime(),default=datetime.utcnow) #注册日期
     last_seen = db.Column(db.DateTime(),default=datetime.utcnow)  #最后访问时间
     avatar_hash = db.Column(db.String(32))
+    comments = db.relationship('Comment',backref='author',lazy='dynamic')
     @property
     def password(self):
         raise AttributeError('password is not a readable attribute')
@@ -196,6 +209,30 @@ class User(UserMixin,db.Model):
         return '{url}/{hash}?s={size}&d={default}&r={rating}'.format(
             url=url, hash=hash, size=size, default=default, rating=rating)
 
+
+    def follow(self, user):
+        if not self.is_following(user):
+            f = Follow(follower=self, followed=user)
+            db.session.add(f)
+
+    def unfollow(self, user):
+        f = self.followed.filter_by(followed_id=user.id).first()
+        if f:
+            db.session.delete(f)
+
+    def is_following(self, user):
+        if user.id is None:
+            return False
+        return self.followed.filter_by(
+            followed_id=user.id).first() is not None
+
+    def is_followed_by(self, user):
+        if user.id is None:
+            return False
+        return self.followers.filter_by(
+            follower_id=user.id).first() is not None
+
+
 class AnonymousUser(AnonymousUserMixin):
     def can(self,permissions):
         return False
@@ -217,7 +254,8 @@ class Post(db.Model):
     body = db.Column(db.Text)
     timetamp = db.Column(db.DateTime,index=True,default=datetime.utcnow)
     author_id = db.Column(db.Integer,db.ForeignKey('users.id'))
-
+    body_html = db.Column(db.Text)
+    comments = db.relationship('Comment',backref='post',lazy='dynamic')
     @staticmethod
     def posts(count=100):
         fake = Faker("zh_CN")
@@ -230,12 +268,51 @@ class Post(db.Model):
             db.session.add(p)
         db.session.commit()
 
+    @staticmethod
+    def on_changed_body(target, value, oldvalue, initiator):
+        allowed_tags = [
+            'a', 'abbr', 'acronym', 'b', 'blockquote', 'code',
+            'em', 'i', 'li', 'ol', 'pre', 'strong', 'ul',
+            'h1', 'h2', 'h3', 'p'
+        ]
+        target.body_html = bleach.linkify(
+            bleach.clean(markdown(value, output_format='html'), tags=allowed_tags, strip=True))
+
+
+db.event.listen(Post.body, 'set', Post.on_changed_body)
+
 
 class LakerMessage(db.Model):
     __tablename__ = 'laker'
     id = db.Column(db.Integer, primary_key=True)
     tile = db.Column(db.Text)
     context = db.Column(db.Text)
+
+
+class LakerNews(db.Model):
+    __tablename__ = 'news'
+    id = db.Column(db.Integer,primary_key=True)
+    url = db.Column(db.Text)
+    context = db.Column(db.Text)
+    comments = db.relationship('Comment', backref='news', lazy='dynamic')
+
+class Comment(db.Model):
+    __tablename__='comments'
+    id = db.Column(db.Integer,primary_key=True)
+    body = db.Column(db.Text)
+    body_html = db.Column(db.Text)
+    timetamp = db.Column(db.DateTime,index=True,default=datetime.utcnow)
+    disabled = db.Column(db.Boolean)
+    author_id = db.Column(db.Integer,db.ForeignKey('users.id'))
+    post_id = db.Column(db.Integer,db.ForeignKey('posts.id'))
+    lakenews_id = db.Column(db.Integer,db.ForeignKey('news.id'))
+
+    @staticmethod
+    def on_changed_body(target,value,overvalue,initiator):
+        allowed_tags = ['a','abbr','acronmy','b','code','em','i','strong']
+        target.body_html = bleach.linkify(bleach.clean(markdown(value,output_format='html'),
+                                                       tags=allowed_tags,strip=True))
+db.event.listen(Comment.body, 'set', Comment.on_changed_body)
 
 
 @login_manager.user_loader

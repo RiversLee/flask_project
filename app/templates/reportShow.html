@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "bootstrap/wtf.html" as wtf %}
+{% import "_macros.html" as macros%}
+{% block title %}RiverBlog - ReportShow{% endblock %}
+
+{% block page_content %}
+    <div class="page-header">
+        <h2>{{news.url}}</h2>
+     </div>
+    <div>
+        <p>{{news.context[0:2000]}}</p>
+    </div>
+{% if current_user.can(Permission.COMMENT) %}
+<div class="comment-form">
+    {{ wtf.quick_form(form) }}
+</div>
+{% endif %}
+{% include '_comment.html' %}
+{% if pagination %}
+<div class="pagination">
+    {{ macros.pagination_widget(pagination, 'auth.report_edit', fragment='#comments', id=news.id) }}
+</div>
+{%endif%}
+{% endblock %}

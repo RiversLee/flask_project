@@ -1,0 +1,27 @@
+<ul class="posts">
+
+    {%for post in posts%}
+    <li class="post">
+        <div class="post-content">
+            <div class="post-body">
+                {{post.url}}
+            </div>
+        </div>
+        <div class="post-footer">
+                {% if current_user.is_administrator() %}
+                <a href="{{ url_for('auth.index') }}">
+                    <span class="label label-danger">Edit [Admin]</span>
+                </a>
+                {% endif %}
+                <a href="{{ url_for('auth.report_edit',id=post.id) }}">
+                    <span class="label label-default">Commentlink</span>
+                </a>
+                 <a href="{{ url_for('auth.report_edit', id=post.id) }}#comments">
+                    <span class="label label-primary">{{ post.comments.count() }} Comments</span>
+                </a>
+            </div>
+    </li>
+
+    {% endfor %}
+
+</ul>
